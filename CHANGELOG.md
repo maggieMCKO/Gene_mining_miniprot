@@ -14,5 +14,9 @@ Changes relative to MaximePolicarpo/Gene_mining_miniprot @ 2ec3b67.
 - `scripts/sort_sequences.py`: pools per-genome FASTAs into `sorted/<gene|suspect>/<call or tier>/`;
   called at the end of `run_batch.sh`.
 
+- `build_tree.sh` (+ `scripts/prepare_tree_input.py`, `scripts/make_nexus.py`, `environment_tree.yml`):
+  pool candidate sets + reference proteins, muscle → mafft --add --keeplength → trimal → IQ-TREE
+  (ModelFinder, UFBoot) → one NEXUS file with alignment and tree.
+
 ### Unchanged
 - Default behaviour of every original option and step.

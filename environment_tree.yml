@@ -1,0 +1,12 @@
+name: gene_miner_tree_env
+# Optional: tools for build_tree.sh (alignment + IQ-TREE + NEXUS of mined candidates)
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.10
+  - biopython
+  - muscle>=5
+  - mafft
+  - trimal
+  - iqtree>=2

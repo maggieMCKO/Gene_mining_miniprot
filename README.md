@@ -531,6 +531,34 @@ Checks:
   their RefSeq CDS.
 - Chicken (galGal6) has the RefSeq gene structure, with 4 SNPs.
 
+### Alignment, tree and NEXUS of the mined sequences (`build_tree.sh`)
+
+Optional last step. It uses a separate conda env: `environment_tree.yml`, with muscle, mafft, trimal,
+IQ-TREE and Biopython.
+
+```bash
+conda env create -f environment_tree.yml && conda activate gene_miner_tree_env
+bash build_tree.sh --reference_proteins REF.prot \
+    --set SET1=OUTDIR1/sorted/GENE/synth_ready/GENE.GENE.synth_ready.prot.fa \
+    --set SET2=OUTDIR2/sorted/GENE/synth_ready/GENE.GENE.synth_ready.prot.fa \
+    -o tree_out/ --prefix GENE -t 8
+```
+
+What it does:
+
+1. Pools the sets and gives every sequence a tree-safe name of the form `<TAG>_<species>_<locus>`.
+   `name_map.tsv` maps each name back to the original header. The same locus found in two sets (same
+   protein at the same coordinates) is kept once.
+2. Aligns the reference proteins with MUSCLE 5.
+3. Adds the candidates onto that alignment frame with `mafft --add --keeplength`. Residues that would
+   be insertions relative to the references are dropped.
+4. Trims with `trimal -gt 0.7 -cons 60`.
+5. Runs `iqtree -m TEST -bb 1000` (ModelFinder model selection plus 1000 ultrafast bootstraps).
+6. Writes `<prefix>.prot.aln_with_tree.nex`, one NEXUS file with the trimmed alignment and the tree
+   (support values kept), via `scripts/make_nexus.py`.
+
+The tree is unrooted. To root it, add outgroup proteins as another `--set`.
+
 These settings were tuned on one gene. For a new gene, validate first:
 1. Mine a few species that have their own RefSeq protein, leaving that
    protein out of the reference set.
