@@ -557,7 +557,14 @@ What it does:
 6. Writes `<prefix>.prot.aln_with_tree.nex`, one NEXUS file with the trimmed alignment and the tree
    (support values kept), via `scripts/make_nexus.py`.
 
-The tree is unrooted. To root it, add outgroup proteins as another `--set`.
+**Rooting.** Add `--outgroup OUT.faa` to root the tree, for example with a few proteins of a paralogue
+of the target gene (we used MLXIP to root MLXIPL).
+
+- The outgroup sequences are aligned like the candidates, and IQ-TREE gets `-o <outgroup tips>`.
+- `make_nexus.py --outgroup` then puts a bifurcating root on the branch between the outgroup and
+  everything else. It checks that every support value stays on the same bipartition.
+- The NEXUS tree is marked `[&R]` (rooted).
+- Without `--outgroup` the tree is unrooted.
 
 These settings were tuned on one gene. For a new gene, validate first:
 1. Mine a few species that have their own RefSeq protein, leaving that

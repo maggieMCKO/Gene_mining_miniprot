@@ -7,31 +7,36 @@
 #   2. muscle -align the reference proteins (the alignment frame)
 #   3. mafft --add candidates --keeplength onto that frame
 #   4. trimal -gt 0.7 -cons 60
-#   5. iqtree -m TEST -bb 1000 (ModelFinder + 1000 ultrafast bootstraps)
-#   6. make_nexus.py: trimmed alignment + tree in one NEXUS file
+#   5. iqtree -m TEST -bb 1000 (ModelFinder + 1000 ultrafast bootstraps); rooted on the outgroup
+#      sequences with -o if --outgroup is given
+#   6. make_nexus.py: trimmed alignment + tree in one NEXUS file (with --outgroup: a bifurcating
+#      root on the branch between outgroup and ingroup, support values checked)
 #
 # Usage:
 #   build_tree.sh --reference_proteins REF.faa --set TAG=PROT.fa [--set TAG=PROT.fa ...] \
-#                 -o OUTDIR [--prefix NAME] [-t THREADS] [--trimal-args "..."] [--iqtree-args "..."]
+#                 [--outgroup OUT.faa] -o OUTDIR [--prefix NAME] [-t THREADS] \
+#                 [--trimal-args "..."] [--iqtree-args "..."]
 #
 # Required:
 #   --reference_proteins FILE   unaligned reference proteins (e.g. the mine_gene.sh ingroup set)
 #   --set TAG=FILE              candidate proteins; TAG (short, e.g. NEC) prefixes the tree names
 #   -o/--outdir DIR
 # Optional:
+#   --outgroup FILE             outgroup proteins (e.g. a paralogue of the gene); added like the
+#                               candidates (names OUT_<id>) and used to root the tree (iqtree -o)
 #   --prefix NAME               output file prefix [tree]
 #   -t/--threads INT            [4]
 #   --trimal-args STR           [-gt 0.7 -cons 60]
 #   --iqtree-args STR           [-m TEST -bb 1000]
 #
-# Note: --keeplength drops residues that would be insertions relative to the reference frame, and
-# the tree is unrooted unless you add outgroup sequences as one more --set.
+# Note: --keeplength drops residues that would be insertions relative to the reference frame
+# (also for outgroup sequences). Without --outgroup the tree is unrooted.
 #
 # Environment: environment_tree.yml (muscle, mafft, trimal, iqtree, biopython).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REF=""; OUTDIR=""; PREFIX="tree"; THREADS=4
+REF=""; OUTDIR=""; PREFIX="tree"; THREADS=4; OUTGROUP=()
 TRIMAL_ARGS="-gt 0.7 -cons 60"; IQTREE_ARGS="-m TEST -bb 1000"; SETS=()
 
 usage() { grep '^# ' "$0" | sed 's/^# \?//'; exit 1; }
@@ -39,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --reference_proteins) REF="$2"; shift 2 ;;
         --set) SETS+=(--set "$2"); shift 2 ;;
+        --outgroup) OUTGROUP=(--outgroup "$(realpath "$2")"); shift 2 ;;
         -o|--outdir) OUTDIR="$2"; shift 2 ;;
         --prefix) PREFIX="$2"; shift 2 ;;
         -t|--threads) THREADS="$2"; shift 2 ;;
@@ -57,8 +63,14 @@ log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 mkdir -p "$OUTDIR"
 
 log "Preparing input"
-python3 "${SCRIPT_DIR}/scripts/prepare_tree_input.py" --reference_proteins "$REF" "${SETS[@]}" -o "$OUTDIR"
+python3 "${SCRIPT_DIR}/scripts/prepare_tree_input.py" --reference_proteins "$REF" "${SETS[@]}" \
+    "${OUTGROUP[@]}" -o "$OUTDIR"
 cd "$OUTDIR"
+ROOT_ARGS=()
+if [[ -s outgroup_names.txt ]]; then
+    ROOT_ARGS=(-o "$(paste -sd, outgroup_names.txt)")
+    log "Tree will be rooted on: $(paste -sd' ' outgroup_names.txt)"
+fi
 
 log "Aligning reference proteins (muscle)"
 muscle -align refs.prot.fa -output refs.prot.aln 2> muscle.log
@@ -71,11 +83,13 @@ log "Trimming (trimal ${TRIMAL_ARGS})"
 trimal -in "${PREFIX}.prot.aln" -out "${PREFIX}.prot.aln.trimmed" $TRIMAL_ARGS > trimal.log 2>&1
 
 log "Building tree (iqtree ${IQTREE_ARGS})"
-iqtree -s "${PREFIX}.prot.aln.trimmed" --seqtype AA $IQTREE_ARGS -nt "$THREADS" \
+iqtree -s "${PREFIX}.prot.aln.trimmed" --seqtype AA $IQTREE_ARGS "${ROOT_ARGS[@]}" -nt "$THREADS" \
     --prefix "$PREFIX" -redo --quiet
 
 log "Writing NEXUS (alignment + tree)"
+NEX_ARGS=()
+[[ -s outgroup_names.txt ]] && NEX_ARGS=(--outgroup outgroup_names.txt)
 python3 "${SCRIPT_DIR}/scripts/make_nexus.py" "${PREFIX}.prot.aln.trimmed" "${PREFIX}.treefile" \
-    "${PREFIX}.prot.aln_with_tree.nex"
+    "${PREFIX}.prot.aln_with_tree.nex" "${NEX_ARGS[@]}"
 
 log "Done: ${OUTDIR}/${PREFIX}.prot.aln_with_tree.nex"

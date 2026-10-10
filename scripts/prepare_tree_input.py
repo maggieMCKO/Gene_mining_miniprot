@@ -11,10 +11,15 @@ as a whole and prefixed with <TAG>_. Reference names get the prefix REF_. Termin
 A candidate whose protein AND genomic start-end are identical to one already kept (the same
 assembly listed in two sets) is skipped and logged in name_map.tsv.
 
-Usage:
-    prepare_tree_input.py --reference_proteins REF.faa --set TAG=FILE [--set TAG=FILE ...] -o OUTDIR
+--outgroup FILE adds outgroup proteins (e.g. a paralogue) named OUT_<id>; they are aligned like the
+candidates and their tree names are listed in outgroup_names.txt (used by build_tree.sh to root).
 
-Writes OUTDIR/refs.prot.fa, OUTDIR/candidates.prot.fa, OUTDIR/name_map.tsv
+Usage:
+    prepare_tree_input.py --reference_proteins REF.faa --set TAG=FILE [--set TAG=FILE ...] \
+                          [--outgroup FILE] -o OUTDIR
+
+Writes OUTDIR/refs.prot.fa, OUTDIR/candidates.prot.fa, OUTDIR/name_map.tsv,
+OUTDIR/outgroup_names.txt
 """
 import argparse
 import os
@@ -34,6 +39,7 @@ def main():
     ap.add_argument("--reference_proteins", required=True)
     ap.add_argument("--set", action="append", required=True, metavar="TAG=FILE",
                     help="candidate protein FASTA with a short tag used as name prefix (repeatable)")
+    ap.add_argument("--outgroup", help="outgroup protein FASTA (named OUT_<id>, used to root)")
     ap.add_argument("-o", "--outdir", required=True)
     args = ap.parse_args()
 
@@ -78,7 +84,20 @@ def main():
                 cf.write(f">{name}\n{seq}\n")
                 m.write(f"{name}\t{tag}\t{rec.id}\n")
                 n_cand += 1
-    print(f"[prepare_tree_input] {n_ref} references, {n_cand} candidates, {n_dup} duplicates skipped",
+        out_names = []
+        if args.outgroup:
+            for rec in SeqIO.parse(args.outgroup, "fasta"):
+                name = "OUT_" + clean(rec.id)
+                if name in seen:
+                    sys.exit(f"duplicate outgroup name after cleaning: {name}")
+                seen.add(name)
+                cf.write(f">{name}\n{str(rec.seq).rstrip('*')}\n")
+                m.write(f"{name}\toutgroup\t{rec.id}\n")
+                out_names.append(name)
+    with open(os.path.join(args.outdir, "outgroup_names.txt"), "w") as fh:
+        fh.writelines(f"{n}\n" for n in out_names)
+    print(f"[prepare_tree_input] {n_ref} references, {n_cand} candidates, {len(out_names)} outgroups, "
+          f"{n_dup} duplicates skipped",
           file=sys.stderr)
 
 

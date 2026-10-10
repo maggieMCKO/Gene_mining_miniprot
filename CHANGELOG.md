@@ -18,5 +18,9 @@ Changes relative to MaximePolicarpo/Gene_mining_miniprot @ 2ec3b67.
   pool candidate sets + reference proteins, muscle → mafft --add --keeplength → trimal → IQ-TREE
   (ModelFinder, UFBoot) → one NEXUS file with alignment and tree.
 
+- `build_tree.sh --outgroup FILE`: outgroup proteins (`OUT_<id>`) aligned with the candidates, IQ-TREE
+  `-o`, and `make_nexus.py --outgroup` writes a bifurcating rooted tree (`[&R]`), verifying that all
+  support values stay on the same bipartitions.
+
 ### Unchanged
 - Default behaviour of every original option and step.
