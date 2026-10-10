@@ -54,6 +54,14 @@
 #                                   scoring copy of the gene exists elsewhere
 #                                   in the same genome (see README, "Known
 #                                   limitations")
+#   --miniprot-args STR            extra miniprot arguments for both passes
+#                                   (recommended for MLXIPL: "-B 15")
+#   --dedup-prefer-intact          per locus, prefer a model without internal
+#                                   stop/frameshift if >= 90% as long as the
+#                                   longest model there (instead of best score)
+#
+# Tuned fork (2026-10): after the final report, scripts/assess_tiers.py adds
+# usability tiers to summary.tsv and writes <prefix>.tiers.{cds,prot}.fa.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,6 +83,8 @@ THREADS=4
 MIN_IDENTITY=0.25
 MAX_INTRON=200000
 MERGE_DIST=5000
+MINIPROT_ARGS=""
+DEDUP_PREFER_INTACT=0
 COMPLETE_FRAC=0.8
 CLEAN_TMP=0
 SKIP_PERMISSIVE_PASS=0
@@ -95,6 +105,8 @@ while [[ $# -gt 0 ]]; do
         --min-identity) MIN_IDENTITY="$2"; shift 2 ;;
         --maxintron) MAX_INTRON="$2"; shift 2 ;;
         --merge-dist) MERGE_DIST="$2"; shift 2 ;;
+        --miniprot-args) MINIPROT_ARGS="$2"; shift 2 ;;
+        --dedup-prefer-intact) DEDUP_PREFER_INTACT=1; shift 1 ;;
         --complete-frac) COMPLETE_FRAC="$2"; shift 2 ;;
         --clean-tmp) CLEAN_TMP=1; shift 1 ;;
         --skip-permissive-pass) SKIP_PERMISSIVE_PASS=1; shift 1 ;;
@@ -178,12 +190,12 @@ fi
 RAW_GFF="${TMPDIR}/raw.gff"
 if [[ ! -s "$RAW_GFF" ]]; then
     log "Running miniprot pass 1/2 (default settings, max-intron=${MAX_INTRON})"
-    miniprot -t "$THREADS" --gff -G "$MAX_INTRON" \
+    miniprot -t "$THREADS" --gff -G "$MAX_INTRON" $MINIPROT_ARGS \
         "$MPI" "$REFERENCE_PROTEINS" > "${TMPDIR}/raw_pass1.gff" 2> "${TMPDIR}/miniprot_pass1.log"
 
     if [[ "$SKIP_PERMISSIVE_PASS" -eq 0 ]]; then
         log "Running miniprot pass 2/2 (permissive: recovers secondary paralogous loci)"
-        miniprot -t "$THREADS" --gff -G "$MAX_INTRON" -p 0.1 --outs=0.1 -N 50 -P P2 \
+        miniprot -t "$THREADS" --gff -G "$MAX_INTRON" -p 0.1 --outs=0.1 -N 50 -P P2 $MINIPROT_ARGS \
             "$MPI" "$REFERENCE_PROTEINS" > "${TMPDIR}/raw_pass2.gff" 2> "${TMPDIR}/miniprot_pass2.log"
         cat "${TMPDIR}/raw_pass1.gff" "${TMPDIR}/raw_pass2.gff" > "$RAW_GFF"
     else
@@ -206,7 +218,8 @@ python3 "${SCRIPT_DIR}/scripts/parse_miniprot_gff.py" \
 log "Deduplicating overlapping gene models"
 python3 "${SCRIPT_DIR}/scripts/dedup_loci.py" \
     "${TMPDIR}/raw.meta.tsv" "${TMPDIR}/raw.cds.fa" "${TMPDIR}/raw.prot.fa" \
-    "${TMPDIR}/dedup" --min-identity "$MIN_IDENTITY" --merge-dist "$MERGE_DIST"
+    "${TMPDIR}/dedup" --min-identity "$MIN_IDENTITY" --merge-dist "$MERGE_DIST" \
+    $([[ "$DEDUP_PREFER_INTACT" -eq 1 ]] && echo --prefer-intact)
 
 N_LOCI=$(($(wc -l < "${TMPDIR}/dedup.meta.tsv") - 1))
 log "$N_LOCI candidate locus/loci found"
@@ -246,6 +259,10 @@ python3 "${SCRIPT_DIR}/scripts/finalize_report.py" \
     "${TMPDIR}/dedup.meta.tsv" "${TMPDIR}/dedup.cds.fa" "${TMPDIR}/dedup.prot.fa" \
     "${TMPDIR}/tree_classification.tsv" "$REFERENCE_PROTEINS" "$GENE_NAME" \
     "$SPECIES" "$ACCESSION_LABEL" "${SPDIR}/${LABEL}.${GENE_NAME}" --complete-frac "$COMPLETE_FRAC"
+
+log "Assigning usability tiers (synth_ready / synth_ready_extended / asr_usable / not_usable)"
+python3 "${SCRIPT_DIR}/scripts/assess_tiers.py" \
+    "$SPDIR" "${SPDIR}/${LABEL}.${GENE_NAME}" "$GENOME_FA" "$REFERENCE_PROTEINS"
 
 if [[ "$CLEAN_TMP" -eq 1 ]]; then
     log "Cleaning up tmp/ (genome index is kept in genomes_cache/ for reuse across genes)"

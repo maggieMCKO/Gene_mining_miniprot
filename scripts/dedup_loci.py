@@ -37,6 +37,9 @@ def main():
                      help="merge gene models within this many bp of each other on the same scaffold")
     ap.add_argument("--min-identity", type=float, default=0.25,
                      help="discard gene models below this miniprot identity before clustering loci")
+    ap.add_argument("--prefer-intact", action="store_true",
+                     help="per locus, prefer models without internal stops/frameshifts, then longer CDS, "
+                          "before miniprot score")
     args = ap.parse_args()
 
     rows = []
@@ -53,6 +56,7 @@ def main():
             row["score"] = float(row["score"]) if row.get("score", "NA") not in ("NA", "") else 0.0
             row["cds_len_nt"] = int(row["cds_len_nt"])
             row["internal_stops"] = int(row["internal_stops"])
+            row["gff_frameshift"] = int(row.get("gff_frameshift", 0))
             rows.append(row)
 
     print(f"[dedup] {len(rows)} raw gene models loaded", file=sys.stderr)
@@ -87,9 +91,21 @@ def main():
     def sort_key(r):
         return (r["score"], r["cds_len_nt"], -r["internal_stops"], r["identity"])
 
+    def pick(cluster):
+        best = max(cluster, key=sort_key)
+        if args.prefer_intact:
+            # an intact model (no internal stop / frameshift) wins if it is >= 90% as long as
+            # the longest model here, so a short clean fragment cannot mask a real pseudogene
+            longest = max(r["cds_len_nt"] for r in cluster)
+            intact = [r for r in cluster if r["internal_stops"] == 0 and r["gff_frameshift"] == 0
+                      and r["cds_len_nt"] >= 0.9 * longest]
+            if intact:
+                best = max(intact, key=sort_key)
+        return best
+
     best_rows = []
     for cluster in loci:
-        best = max(cluster, key=sort_key)
+        best = pick(cluster)
         best["n_models_at_locus"] = len(cluster)
         best_rows.append(best)
 
