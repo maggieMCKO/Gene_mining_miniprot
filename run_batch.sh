@@ -63,3 +63,6 @@ for f in "$OUTDIR/$GENE_NAME"/*/*."$GENE_NAME".summary.tsv; do
     fi
 done
 echo "[batch] Combined summary: $OUT_COMBINED" >&2
+
+echo "[batch] Sorting sequences by functional call / tier into ${OUTDIR}/sorted/" >&2
+python3 "${SCRIPT_DIR}/scripts/sort_sequences.py" "$OUTDIR" "$GENE_NAME"

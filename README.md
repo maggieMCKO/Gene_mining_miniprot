@@ -1,5 +1,11 @@
 # Gene_mining_miniprot
 
+> **Fork note.** This is a modified fork of
+> [MaximePolicarpo/Gene_mining_miniprot](https://github.com/MaximePolicarpo/Gene_mining_miniprot)
+> (MIT License, original copyright retained in `LICENSE`). The additions are
+> described in [§10 Modifications in this fork](#10-modifications-in-this-fork)
+> and `CHANGELOG.md`; everything else is the original pipeline.
+
 A lightweight pipeline for mining a single-copy gene (or a small family of
 close paralogues, like a gene and its rare in-group duplicate) out of raw
 genome assemblies, built on **miniprot**, **mafft** and **FastTree**.
@@ -199,6 +205,12 @@ mine_gene.sh --reference_proteins FILE --reference_alignment FILE \
   --clean-tmp               delete tmp/ (GFF, raw candidates, alignment,
                             tree) after a successful run; the genome index
                             is always kept in genomes_cache/ for reuse
+  --skip-permissive-pass    run only the default-settings miniprot pass
+  --miniprot-args STR       [fork] extra miniprot arguments for both passes,
+                            e.g. "-B 15" (see §10)
+  --dedup-prefer-intact     [fork] per locus, prefer an intact model
+                            (no internal stop / frameshift) >= 90% as long
+                            as the longest model, over the best-scoring one
 ```
 
 ---
@@ -330,9 +342,14 @@ OUTDIR/
 │       ├── <label>.<gene_name>.cds.fa            # confident ingroup calls only
 │       ├── <label>.<gene_name>.prot.fa           # confident ingroup calls only
 │       ├── <label>.<gene_name>.ambiguous.cds.fa  # AMBIGUOUS/OUTGROUP_SUSPECT calls
-│       └── <label>.<gene_name>.ambiguous.prot.fa # AMBIGUOUS/OUTGROUP_SUSPECT calls
+│       ├── <label>.<gene_name>.ambiguous.prot.fa # AMBIGUOUS/OUTGROUP_SUSPECT calls
+│       ├── <label>.<gene_name>.tiers.cds.fa      # [fork] every locus, header ...|clade|tier
+│       └── <label>.<gene_name>.tiers.prot.fa     #        (extended CDS for synth_ready_extended)
 │
-└── all_species_<gene_name>_summary.tsv  # written by run_batch.sh
+├── all_species_<gene_name>_summary.tsv  # written by run_batch.sh
+└── sorted/                              # [fork] written by run_batch.sh / scripts/sort_sequences.py
+    ├── <gene_name>/  {functional_complete, pseudogene, synth_ready, synth_ready_extended, asr_usable}/
+    └── suspect/      {same}/            # OUTGROUP_SUSPECT / AMBIGUOUS placements
 ```
 
 `summary.tsv` columns: `gene_id, mrna_id, species, accession, chrom, start,
@@ -439,4 +456,83 @@ exon boundaries, resolving an ambiguous splice site, correcting a probable
 assembly error, etc.) is a separate step this pipeline doesn't attempt —
 if you're unsure how to do this, ask Jinseok, since the manual curation
 conventions used for this project aren't written down here (yet).
+
+---
+
+## 10. Modifications in this fork
+
+These were added while mining MLXIPL from 46 + 361 bird assemblies, with
+the goal of getting two kinds of usable sequence out of every run:
+(1) full-length CDS that can be synthesized, and (2) in-frame sequences
+for codon-based analyses (aBSREL/HyPhy, FastML and other ancestral
+sequence reconstruction), including partial ones.
+
+### New options (opt-in; defaults unchanged)
+
+- `--miniprot-args STR` passes extra arguments to both miniprot passes.
+  `-B 15` (a bonus for alignments that reach the query ends) let miniprot
+  include the stop codon for proteins with a poorly conserved C-terminus
+  (MLXIPL ends in a serine-rich tail).
+  - Avoid raising `-F` (the frameshift penalty). It makes miniprot splice
+    around real frameshifts with short or non-canonical "introns".
+- `--dedup-prefer-intact`: several reference queries usually align to the
+  same locus, and some of them carry an artifactual frameshift that others
+  do not. Picking the best-scoring model (the default) often kept the broken
+  one. With this flag, an intact model wins if it is ≥ 90% as long as the
+  longest model at that locus. The length guard stops a short clean fragment
+  from hiding a real pseudogene.
+
+### Usability tiers (`scripts/assess_tiers.py`, always run)
+
+Each locus in `summary.tsv` gets a `tier` plus the columns it is based on:
+`start_M, end_stop, ext_codons_N, ext_codons_C, n_X, n_ambiguous_nt,
+ref_core_missing_N, ref_core_missing_C, max_unexplained_gap, ref_core_cov,
+min_intron, noncanonical_splices`. The "reference core" is the set of
+placement-alignment columns where ≥ 4 references have a residue.
+
+| tier | criteria |
+|---|---|
+| `synth_ready` | ATG start and stop codon in the miniprot CDS; no internal stop, frameshift or in-frame stop; no N or ambiguous base anywhere in the CDS; ≤ 5 reference-core residues missing at either end; no internal gap ≥ 20 aa that no reference shares; all introns canonical (GT/GC…AG) and ≥ 60 bp |
+| `synth_ready_extended` | As above, except the start ATG and/or stop codon lies just outside the alignment. It was found by extending the CDS in frame along the genome by ≤ 10 codons, never through N. The written CDS includes the extension. |
+| `asr_usable` | No internal stop, frameshift or in-frame stop, and ≥ 50 % of the reference core covered. Partial models, gaps and Ns are allowed. |
+| `not_usable` | Everything else |
+
+**Why the extension.** miniprot stops aligning where the query stops
+matching. If a species' C-terminus is a few residues shorter or longer than
+the references', the alignment ends a few codons before the real stop
+codon, and the CDS is written without it.
+- The extension reads the genome on, in frame, for at most 10 codons.
+- It accepts the result only for models that pass every other
+  `synth_ready` check.
+- The established, more general tool for this is AGAT
+  `agat_sp_add_start_and_stop.pl --extend`.
+
+**Sorted output** (`scripts/sort_sequences.py`, run automatically by
+`run_batch.sh`): `sorted/<gene_name>/synth_ready/`,
+`sorted/<gene_name>/synth_ready_extended/` and
+`sorted/<gene_name>/asr_usable/`.
+- The `asr_usable/` folder pools all three usable tiers, with the terminal
+  stop codon removed, ready for a codon alignment.
+- `sorted/suspect/` has the same subfolders for loci the tree did not place
+  in the target clade.
+
+### Effect (MLXIPL, 46 bird genomes, best locus per genome)
+
+| | original defaults | `--miniprot-args "-B 15" --dedup-prefer-intact` |
+|---|---|---|
+| synth_ready | 6 | 17 |
+| synth_ready (+ extended) | 13* | 21 |
+| usable for codon analyses | 17 | 32 |
+
+\* With the extension, but before the N checks were added.
+
+Checks:
+- The `synth_ready` CDS for *Apus apus* and *Parus major* are identical to
+  their RefSeq CDS.
+- Chicken (galGal6) has the RefSeq gene structure, with 4 SNPs.
+
+These settings were tuned on one gene. For a new gene, validate first:
+1. Mine a few species that have their own RefSeq protein, leaving that
+   protein out of the reference set.
+2. Check that the `synth_ready` CDS matches RefSeq from ATG to stop.
 
